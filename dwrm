@@ -3,9 +3,10 @@
 =begin
     
 File:      dwrm
+Version:   0.0.1
 Author:    Austin Ewens
 Created:   07-17-2014
-Copyright: 
+Copyright: 2014, Austin Ewens
 Purpose:   A shell utility for a private version control system
     
 =end
@@ -26,7 +27,7 @@ def help_docs
 # Documentation for DataWorm
 
     puts <<-EOF
-= dwrm
+= dwrm v0.0.1
 
 * Written by Austin Ewens
 * Copyright 2014, Austin Ewens
