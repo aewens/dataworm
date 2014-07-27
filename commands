@@ -1,0 +1,52 @@
+events ->
+    Get Unix Timestamp of action occurrence
+    Update config and necessary hash init files
+    Gzip tarball UUID directory to .dwrm for recovery
+    Log last command in config.yml
+
+help ->
+    Echo out help documentation
+init ->
+    Initialize the .dwrm directory and its contents
+list ->
+    Echo out :list
+push ->
+    Make gzipped tarball of current directory
+    If first push, create initial UUID with first file and first hash
+    Else, Make new hash in UUID directory
+    Create new init files for hash
+    If previous hash, perform diff/patch on the .tar.gz file
+    Else do diff/patch on the empty first file, then fill it with the hash
+pop ->
+    Only do if the UUID directory is not empty!!!
+    Make gzipped tarball of current directory
+    Use the diff file in the last push to patch the .tar.gz file
+    Store a copy of the .tar.gz in .tmp
+    Replace contents of current directory with the patched .tar.gz file
+    Store the last hash in .tmp
+revert (hash) ->
+    Make no action if {hash} does not exist!
+    Same as pop, but on {hash} instead of last push
+    Store all hashes following the reverted-to hash
+undo (x=1) ->
+    Rollback the directory's UUID directory back {x} hashes
+    Store undone hashes in the .tmp
+    -> Create an undo file with info on how to restore the hashes
+redo ->
+    Restore hashes in .tmp to their proper home directory
+    * This is only usable immediately after a pop or undo
+remove ->
+    Make gzipped tarball of .dwrm
+    Destroy .dwrm directory entirely
+    Send .dwrm.tar.gz to .tmp
+restore ->
+    Restore .dwrm.tar.gz in .tmp to its proper home directory
+    -> read :here in the config to put back properly
+    * This is only usable immediately after a remove
+recover (dir=.) ->
+    Use the UUID.tar.gz to recover any damage to DataWorm's version
+    Basically, just replace DataWorm's version with your's
+    * It will intelligently update the init files using hashes to figure out
+      which part of the version history you are in
+    A custom directory to the file can be passed as well
+    The parameter is defaulted to the current location

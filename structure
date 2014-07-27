@@ -1,0 +1,81 @@
+(root)/
+    dwrm
+    lib/(...)
+    .tmp/
+        (hashb)/(...)
+        (hashc)/(...)
+        undo
+        ->
+            uuid:  (uuidn)
+            first: hashb
+            last:  hashc
+            prev:  hasha
+    data/
+        config.yml
+        ->
+            pop:
+                ttl: (time=1)
+            remove:
+                ttl: (time=3)
+        (uuid0)/
+            first
+            ->
+                hash0
+            (hash0)/
+                diff
+                next
+                -> 
+                    hash1
+            (hash1)/
+                diff
+                prev
+                ->
+                    hash0
+                next
+                -> 
+                    hash2
+            (hash2)/
+                diff
+                prev
+                ->
+                    hash1
+                next
+            ...
+            (hashn)/
+                diff
+                prev
+                next
+        (uuid1)/
+            first
+            (hash0)/
+                diff
+                prev
+                next
+            (hash1)/
+                diff
+                prev
+                next
+            (hash2)/
+                diff
+                prev
+                next
+            ...
+            (hashn)/
+                diff
+                prev
+                next
+            
+---
+
+(==uuid0)/
+    .dwrm/
+        config.yml
+        ->
+            uuid: (uuid0)
+            root: (root)
+            last: (hashn)
+            here: (==uuid0)
+            list: ([hash0..n])
+            time: (timestamp)
+            hist: (last_cmd)
+        (uuid0).tar.gz

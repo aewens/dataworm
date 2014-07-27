@@ -1,0 +1,181 @@
+#!/usr/bin/env ruby
+
+=begin
+    
+File:      dwrm
+Author:    Austin Ewens
+Created:   07-17-2014
+Copyright: 
+Purpose:   A shell utility for a private version control system
+    
+=end
+
+# $:.unshift(File.expand_path(File.dirname(__FILE__) + "/lib"))
+require "fileutils"
+require "yaml"
+
+# here = File.expand_path(File.dirname(__FILE__))
+
+#-- Function graveyard
+    # hash = rand(36**16).to_s(36)
+    # /(\.?\.?(?:\/\w*)*)[^\/]?/
+    
+puts "\n---[ DataWorm ]---\n\n"
+
+def help_docs
+# Documentation for DataWorm
+
+    puts <<-EOF
+= dwrm
+
+* Written by Austin Ewens
+* Copyright 2014, Austin Ewens
+
+
+== Description:
+
+DWRM stands for DataWoRM (formerly written as DataWorm)
+
+It is a Private Version Control System (PVCS) that acts as a Git substitute to 
+create local repositories on your machine only accessible by you*. The intent 
+is to allow for version control while giving you both control and privacy over 
+your data.
+
+DataWorm will also not only manage the historical versions of your projects in 
+a PVCS fashion, but also make delta backups and temporary restore points 
+whenever any destructive action is done to your project to allow for immediate 
+restore to the last version that was popped from your repository.
+
+* Refer to Disclaimer
+
+
+== Disclaimer
+
+DataWorm is strictly an offline service that only manages data locally across 
+your drive. No monitoring of any kind is done through legitimate copies of 
+DataWorm. All data obtained from your computer by DataWorm does not and will 
+not ever be sent outside the scope of your machine unless specified otherwise. 
+
+For any legitimate concerns regarding the disclaimers above, contact me at 
+https://github.com/aewens or https://twitter.com/aewens_
+
+
+== Compatibility
+
+DataWorm intends to add compatibility for Git so that it will not be able to 
+accidentally interact with and/or corrupt any of DataWorm's configurations and 
+possible backups.
+
+
+== Usage:
+    dwrm [--flags] <parameter>
+
+
+== Flags
+
+Format: -a, --abc, abc
+Usable:
+    help    :: Print out the documenation you are reading now
+    init    :: Intialize the .dwrm directory and its configurations
+    push    :: Push a version to your repository
+    pop     :: Pop a version from your repository
+    revert  :: {hash} -> Takes a version hash as a parameter
+                Revert back to version {hash} from the repository
+    undo    :: {num} -> Takes a number as a parameter; Defaults to 1
+                Rollback {num} versions back in the repo's Version Stack
+    redo    :: Pushes back any versions removed by pop, revert, or undo
+    remove  :: Safely remove your project from DataWorm
+    restore :: Recreate your project to DataWorm if it was removed
+    recover :: Rollback entire repository back to last version if corrupted
+
+
+    EOF
+end
+
+#-- Helper functions
+def gen_directory
+# Generate a directory using ARGV
+
+    here = ENV["PWD"].sub("~", ENV["HOME"]).scan(/\/?(\.+|\w+)/).flatten
+    dest = "/#{here.join("/")}/.dwrm"
+    unless ARGV[1].nil?
+        path = ARGV[1].sub("~", ENV["HOME"])
+        path = path.scan(/\/?(\.+|\w+)/).flatten
+        path = path[1..-1].unshift(here) if path[0] == "."
+        path = path[1..-1].unshift(here[0..-2]) if path[0] == ".."
+        path = path.unshift(here) unless path[0] == "Users"
+        path.each do |x|
+            if x == ".."
+                i = path.index(x) - 1
+                path.delete_at(i)
+                path.delete_at(i)
+            end
+        end
+        path = path.join("/")
+        dest = "/#{path}/.dwrm"
+    end
+    return dest
+end
+
+def directory_exists? dest
+# Determine if directory exists
+
+    return File.exists? File.expand_path(dest)
+end
+
+def push_configs dir
+# Push configuration files to .dwrm
+    
+    
+    config = "#{dir}/config.yml"
+    File.open config, File::CREAT unless File.exist? config
+    File.open(config, "w") do |f|
+        quux = {}
+        quux[:uuid] = 1.upto(8).map{rand(16).to_s(16)}.join("")
+        quux[:root] = File.expand_path(File.dirname(__FILE__))
+        quux[:last] = "-"
+        quux[:here] = dir
+        quux[:list] = [] #[{hash: time}]
+        quux[:time] = Time.now.to_i
+        quux[:hist] = ""
+        f.write(YAML.dump quux)
+    end
+    puts File.open(config, "r").read()
+    puts "\n---\n\n"
+end
+
+def regex_cmd word
+# Command regex generator
+
+    return /^(-#{word[0]}$|(--#{word[0]}|#{word[0]})#{word[1..-1]}$)/
+end
+
+#-- DataWorm functions
+def parse_args
+# Deal with arguments
+    
+    # Only alpha commands may pass
+    if /^(-[a-zA-Z]$|(--[a-zA-Z]|[a-zA-Z])[a-zA-Z]+?$)/ =~ ARGV[0]
+        case ARGV[0]
+        when regex_cmd("help") # -h, --help, help
+            
+        when regex_cmd("init") # -i, --init, init
+            dir = gen_directory()
+            unless directory_exists? dir
+                FileUtils.mkdir_p(dir)
+                push_configs(dir)
+                
+                puts "Initialized empty DataWorm repository in #{dir}"
+            else 
+                puts "DataWorm has already been initialized."
+            end
+        end
+    end
+end
+
+help_docs()
+parse_args() unless ARGV[0].nil?
+
+puts "\n------------------\n\n" 
+
+FileUtils.rm_rf ".dwrm"
