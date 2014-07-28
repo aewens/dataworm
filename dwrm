@@ -69,53 +69,41 @@ possible backups.
 
 
 == Usage:
-    dwrm [--flags] <parameter>
+
+    dwrm [commands] [hash] [flags] [tag]
 
 
-== Flags
+== Commands
 
-Format: -a, --abc, abc
-Usable:
-    help    :: Print out the documenation you are reading now
-    init    :: Intialize the .dwrm directory and its configurations
-    push    :: Push a version to your repository
-    pop     :: Pop a version from your repository
-    revert  :: {hash} -> Takes a version hash as a parameter
-                Revert back to version {hash} from the repository
-    undo    :: {num} -> Takes a number as a parameter; Defaults to 1
-                Rollback {num} versions back in the repo's Version Stack
-    redo    :: Pushes back any versions removed by pop, revert, or undo
-    remove  :: Safely remove your project from DataWorm
-    restore :: Recreate your project to DataWorm if it was removed
-    recover :: Rollback entire repository back to last version if corrupted
-
-
-    EOF
-end
-
-#-- Helper functions
-def gen_directory
-# Generate a directory using ARGV
-
-    here = ENV["PWD"].sub("~", ENV["HOME"]).scan(/\/?(\.+|\w+)/).flatten
-    dest = "/#{here.join("/")}/.dwrm"
-    unless ARGV[1].nil?
-        path = ARGV[1].sub("~", ENV["HOME"])
-        path = path.scan(/\/?(\.+|\w+)/).flatten
-        path = path[1..-1].unshift(here) if path[0] == "."
-        path = path[1..-1].unshift(here[0..-2]) if path[0] == ".."
-        path = path.unshift(here) unless path[0] == "Users"
-        path.each do |x|
-            if x == ".."
-                i = path.index(x) - 1
-                path.delete_at(i)
-                path.delete_at(i)
-            end
-        end
-        path = path.join("/")
-        dest = "/#{path}/.dwrm"
-    end
-    return dest
+help    :: Print out the documenation you are reading now
+init    :: Intialize the .dwrm directory and its configurations
+EOF
+# push    :: Push a version to your repository
+# pop     :: Pop a version from your repository
+# revert  :: {hash} -> Takes a version hash as a parameter
+#             Revert back to version {hash} from the repository
+# undo    :: {num} -> Takes a number as a parameter; Defaults to 1
+#             Rollback {num} versions back in the repo's Version Stack
+# redo    :: Pushes back any versions removed by pop, revert, or undo
+# remove  :: Safely remove your project from DataWorm
+# restore :: Recreate your project to DataWorm if it was removed
+# recover :: Rollback entire repository back to last version if corrupted    
+# 
+# 
+# == Flags
+# 
+# Options:
+#     [-bBeos]
+#     [--backup, no-backup, encrypt, offline, ssh]
+# 
+# backup    :: Call backup when disabled in config
+# no-backup :: Negate the effect of default backups
+# encrypt   :: Enables encryption on all data for the current project
+# offline   :: If using SSH, helps improve speed by skipping online check
+# ssh       :: Tell DataWorm to look for your SSH server to store versions
+# 
+# 
+# EOF
 end
 
 def directory_exists? dest
@@ -151,17 +139,15 @@ def regex_cmd word
     return /^(-#{word[0]}$|(--#{word[0]}|#{word[0]})#{word[1..-1]}$)/
 end
 
-#-- DataWorm functions
-def parse_args
+def parse_args here
 # Deal with arguments
     
     # Only alpha commands may pass
     if /^(-[a-zA-Z]$|(--[a-zA-Z]|[a-zA-Z])[a-zA-Z]+?$)/ =~ ARGV[0]
         case ARGV[0]
-        when regex_cmd("help") # -h, --help, help
-            
-        when regex_cmd("init") # -i, --init, init
-            dir = gen_directory()
+        when "help" then help_docs()
+        when "init"
+            dir = "/#{here.join("/")}/.dwrm"
             unless directory_exists? dir
                 FileUtils.mkdir_p(dir)
                 push_configs(dir)
@@ -170,13 +156,24 @@ def parse_args
             else 
                 puts "DataWorm has already been initialized."
             end
+        when "push"
+            curr = here.split("/")[-1]
+            root = File.expand_path(File.dirname(__FILE__))
+            Dir.chdir ".." do
+                cmd  = []
+                cmd << "tar -cvzf #{curr}.tar.gz #{curr}/*"
+                cmd << "mv #{curr}.tar.gz #{root}/data/"
+                %x[#{cmd.join(";")}]
+            end
         end
     end
 end
 
-help_docs()
-parse_args() unless ARGV[0].nil?
+# tar -cvzf dataworm.tar.gz dataworm/*
+
+here = ENV["PWD"].sub("~", ENV["HOME"])
+parse_args(here) unless ARGV[0].nil?
 
 puts "\n------------------\n\n" 
 
-FileUtils.rm_rf ".dwrm"
+# FileUtils.rm_rf ".dwrm"
