@@ -3,7 +3,7 @@
 =begin
     
 File:      dwrm
-Version:   0.0.2
+Version:   0.0.3
 Author:    Austin Ewens
 Created:   07-17-2014
 Copyright: 2014, Austin Ewens
@@ -14,6 +14,7 @@ Purpose:   A shell utility for a private version control system
 # $:.unshift(File.expand_path(File.dirname(__FILE__) + "/lib"))
 require "fileutils"
 require "yaml"
+require "digest"
 
 # here = File.expand_path(File.dirname(__FILE__))
 
@@ -21,13 +22,13 @@ require "yaml"
     # hash = rand(36**16).to_s(36)
     # /(\.?\.?(?:\/\w*)*)[^\/]?/
     
-puts "\n---[ DataWorm ]---\n\n"
+puts "\n+---[ DataWorm ]---+\n\n"
 
 def help_docs
 # Documentation for DataWorm
 
     puts <<-EOF
-= dwrm v0.0.2
+= dwrm
 
 * Written by Austin Ewens
 * Copyright 2014, Austin Ewens
@@ -83,7 +84,7 @@ EOF
 # revert  :: {hash} -> Takes a version hash as a parameter
 #             Revert back to version {hash} from the repository
 # undo    :: {num} -> Takes a number as a parameter; Defaults to 1
-#             Rollback {num} versions back in the repo's Version Stack
+#             Rollback {num} versions back in the repo's version Stack
 # redo    :: Pushes back any versions removed by pop, revert, or undo
 # remove  :: Safely remove your project from DataWorm
 # restore :: Recreate your project to DataWorm if it was removed
@@ -106,31 +107,108 @@ EOF
 # EOF
 end
 
-def directory_exists? dest
+def directory_exists? dests
 # Determine if directory exists
-
-    return File.exists? File.expand_path(dest)
+    
+    exists = true
+    dests.each do |dest|
+        exists = false unless File.directory? File.expand_path(dest)
+    end
+    return exists
 end
 
-def push_configs dir
+def set_configs dir
 # Push configuration files to .dwrm
     
     
     config = "#{dir}/config.yml"
-    File.open config, File::CREAT unless File.exist? config
+    File.open config, File::CREAT unless File.file? config
     File.open(config, "w") do |f|
-        quux = {}
-        quux[:uuid] = 1.upto(8).map{rand(16).to_s(16)}.join("")
-        quux[:root] = File.expand_path(File.dirname(__FILE__))
-        quux[:last] = "-"
-        quux[:here] = dir
-        quux[:list] = [] #[{hash: time}]
-        quux[:time] = Time.now.to_i
-        quux[:hist] = ""
-        f.write(YAML.dump quux)
+        conf = {}
+        conf[:uuid] = 1.upto(8).map{rand(16).to_s(16)}.join("")
+        conf[:root] = File.expand_path(File.dirname(__FILE__))
+        conf[:last] = "-"
+        conf[:here] = dir
+        conf[:list] = {} # {time: hash}
+        conf[:hist] = "" # last command
+        # conf[:time] = Time.now.to_i
+        f.write(YAML.dump conf)
     end
     puts File.open(config, "r").read()
     puts "\n---\n\n"
+end
+
+def dwrm_push here
+    curr = here.split("/")[-1]
+    root = File.expand_path(File.dirname(__FILE__))
+    Dir.chdir ".." do
+        if directory_exists? ["#{root}/data","#{here}/.dwrm"]
+            config = "#{here}/.dwrm/config.yml"
+            conf = nil
+            conf = File.open(config, "r").read if File.file?(config)
+            break if conf.nil?
+            uuid = YAML.load(conf)[:uuid]
+            
+            hash  = Digest::MD5.hexdigest("#{Time.now.to_i}")
+            first = false
+            repo  = "#{root}/data/#{uuid}"
+            unless directory_exists? [repo]
+                FileUtils.mkdir_p(repo)
+                
+                # Create a pseudo last.tar.gz
+                cmd  = []
+                cmd << "cd #{repo}/"
+                cmd << "mkdir last"
+                cmd << "touch last/#{hash}"
+                cmd << "tar -cvzf last.tar.gz last/*"
+                cmd << "rm -rf last/"
+                %x[#{cmd.join(";")}]
+                
+                first = true
+            end
+            
+            uhash = "#{uuid}/#{hash}"
+            
+            cmd  = []
+            cmd << "tar -cvzf #{curr}.tar.gz #{curr}/*"
+            cmd << "mv #{curr}.tar.gz #{repo}/"
+            %x[#{cmd.join(";")}]
+            
+            FileUtils.mkdir_p("#{repo}/#{hash}")
+            
+            c = YAML.load(File.open("#{here}/.dwrm/config.yml", "r").read)
+            list = Hash[c[:list].sort]
+            File.open(config, "w") do |f|
+                c[:list][Time.now.to_i] = hash
+                f.write(YAML.dump c)
+            end
+            
+            one = "#{repo}/#{curr}.tar.gz"
+            two = "#{repo}/last.tar.gz"
+            
+            diff  = []
+            diff << "cd #{root}"
+            diff << "diff --text #{one} #{two} > data/#{uhash}/patch.dpf"
+            diff << "rm #{two}"
+            diff << "mv #{one} #{two}"
+            diff << "cp #{two} #{repo}/first.tar.gz" if first
+            %x[#{diff.join(";")}]
+            
+            unless first
+                last  = []
+                last << "cd #{repo}/#{list[list.keys[-1]]}"
+                last << "echo '#{hash}' > next"
+                last << "cd #{repo}/#{hash}"
+                last << "echo '#{list[list.keys[-1]]}' > prev"
+                %x[#{last.join(";")}]
+            else
+                prev  = []
+                prev << "cd #{repo}/#{hash}"
+                prev << "echo 'first' > prev"
+                %x[#{prev.join(";")}]
+            end
+        end
+    end
 end
 
 def regex_cmd word
@@ -139,41 +217,49 @@ def regex_cmd word
     return /^(-#{word[0]}$|(--#{word[0]}|#{word[0]})#{word[1..-1]}$)/
 end
 
-def parse_args here
+def parse_args
 # Deal with arguments
+    
+    # Full path to current directory
+    here = ENV["PWD"].sub("~", ENV["HOME"])
     
     # Only alpha commands may pass
     if /^(-[a-zA-Z]$|(--[a-zA-Z]|[a-zA-Z])[a-zA-Z]+?$)/ =~ ARGV[0]
         case ARGV[0]
         when "help" then help_docs()
         when "init"
-            dir = "/#{here.join("/")}/.dwrm"
-            unless directory_exists? dir
+            dir = "#{here}/.dwrm"
+            unless directory_exists? [dir]
                 FileUtils.mkdir_p(dir)
-                push_configs(dir)
+                set_configs(dir)
                 
                 puts "Initialized empty DataWorm repository in #{dir}"
             else 
                 puts "DataWorm has already been initialized."
             end
         when "push"
-            curr = here.split("/")[-1]
-            root = File.expand_path(File.dirname(__FILE__))
-            Dir.chdir ".." do
-                cmd  = []
-                cmd << "tar -cvzf #{curr}.tar.gz #{curr}/*"
-                cmd << "mv #{curr}.tar.gz #{root}/data/"
-                %x[#{cmd.join(";")}]
+            dwrm_push(here)
+        end
+        
+        no_care = ["help","list", "init"]
+        if File.file?("#{here}/.dwrm/config.yml") and !no_care.include? ARGV[0]
+            conf = File.open("#{here}/.dwrm/config.yml", "r").read
+            conf = YAML.load(conf)
+            conf[:hist] = ARGV[0]
+            File.open("#{here}/.dwrm/config.yml", "w") do |f|
+                f.write(YAML.dump conf)
             end
         end
     end
 end
 
-# tar -cvzf dataworm.tar.gz dataworm/*
+data = File.expand_path(File.dirname(__FILE__) + "/data")
+unless directory_exists? [data]
+    FileUtils.mkdir_p(data)
+end
 
-here = ENV["PWD"].sub("~", ENV["HOME"])
-parse_args(here) unless ARGV[0].nil?
+parse_args unless ARGV[0].nil?
 
-puts "\n------------------\n\n" 
+puts "\n+------------------+\n\n" 
 
 # FileUtils.rm_rf ".dwrm"
