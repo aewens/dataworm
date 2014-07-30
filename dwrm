@@ -3,7 +3,7 @@
 =begin
     
 File:      dwrm
-Version:   0.0.3
+Version:   0.1.0
 Author:    Austin Ewens
 Created:   07-17-2014
 Copyright: 2014, Austin Ewens
@@ -22,7 +22,7 @@ require "digest"
     # hash = rand(36**16).to_s(36)
     # /(\.?\.?(?:\/\w*)*)[^\/]?/
     
-puts "\n+---[ DataWorm ]---+\n\n"
+# puts "\n+---[ DataWorm ]---+\n\n"
 
 def help_docs
 # Documentation for DataWorm
@@ -78,9 +78,10 @@ possible backups.
 
 help    :: Print out the documenation you are reading now
 init    :: Intialize the .dwrm directory and its configurations
+list    :: List all versions in order of occurrence 
+push    :: Push a version to your repository
+pop     :: Pop a version from your repository
 EOF
-# push    :: Push a version to your repository
-# pop     :: Pop a version from your repository
 # revert  :: {hash} -> Takes a version hash as a parameter
 #             Revert back to version {hash} from the repository
 # undo    :: {num} -> Takes a number as a parameter; Defaults to 1
@@ -135,80 +136,111 @@ def set_configs dir
         f.write(YAML.dump conf)
     end
     puts File.open(config, "r").read()
-    puts "\n---\n\n"
 end
 
 def dwrm_push here
     curr = here.split("/")[-1]
     root = File.expand_path(File.dirname(__FILE__))
     Dir.chdir ".." do
-        if directory_exists? ["#{root}/data","#{here}/.dwrm"]
-            config = "#{here}/.dwrm/config.yml"
-            conf = nil
-            conf = File.open(config, "r").read if File.file?(config)
-            break if conf.nil?
-            uuid = YAML.load(conf)[:uuid]
+        break unless directory_exists? ["#{root}/data","#{here}/.dwrm"]
+        config = "#{here}/.dwrm/config.yml"
+        conf = nil
+        conf = File.open(config, "r").read if File.file?(config)
+        break if conf.nil?
+        uuid = YAML.load(conf)[:uuid]
+        
+        hash  = Digest::MD5.hexdigest("#{Time.now.to_i}")
+        first = false
+        repo  = "#{root}/data/#{uuid}"
+        unless directory_exists? [repo]
+            FileUtils.mkdir_p(repo)
             
-            hash  = Digest::MD5.hexdigest("#{Time.now.to_i}")
-            first = false
-            repo  = "#{root}/data/#{uuid}"
-            unless directory_exists? [repo]
-                FileUtils.mkdir_p(repo)
-                
-                # Create a pseudo last.tar.gz
-                cmd  = []
-                cmd << "cd #{repo}/"
-                cmd << "mkdir last"
-                cmd << "touch last/#{hash}"
-                cmd << "tar -cvzf last.tar.gz last/*"
-                cmd << "rm -rf last/"
-                %x[#{cmd.join(";")}]
-                
-                first = true
-            end
-            
-            uhash = "#{uuid}/#{hash}"
-            
+            # Create a pseudo last.tar.gz
             cmd  = []
-            cmd << "tar -cvzf #{curr}.tar.gz #{curr}/*"
-            cmd << "mv #{curr}.tar.gz #{repo}/"
+            cmd << "cd #{repo}/"
+            cmd << "mkdir last"
+            cmd << "touch last/#{hash}"
+            cmd << "tar -czf last.tar.gz last/"
+            cmd << "rm -rf last/"
             %x[#{cmd.join(";")}]
             
-            FileUtils.mkdir_p("#{repo}/#{hash}")
-            
-            c = YAML.load(File.open("#{here}/.dwrm/config.yml", "r").read)
-            list = Hash[c[:list].sort]
-            File.open(config, "w") do |f|
-                c[:list][Time.now.to_i] = hash
-                f.write(YAML.dump c)
-            end
-            
-            one = "#{repo}/#{curr}.tar.gz"
-            two = "#{repo}/last.tar.gz"
-            
-            diff  = []
-            diff << "cd #{root}"
-            diff << "diff --text #{one} #{two} > data/#{uhash}/patch.dpf"
-            diff << "rm #{two}"
-            diff << "mv #{one} #{two}"
-            diff << "cp #{two} #{repo}/first.tar.gz" if first
-            %x[#{diff.join(";")}]
-            
-            unless first
-                last  = []
-                last << "cd #{repo}/#{list[list.keys[-1]]}"
-                last << "echo '#{hash}' > next"
-                last << "cd #{repo}/#{hash}"
-                last << "echo '#{list[list.keys[-1]]}' > prev"
-                %x[#{last.join(";")}]
-            else
-                prev  = []
-                prev << "cd #{repo}/#{hash}"
-                prev << "echo 'first' > prev"
-                %x[#{prev.join(";")}]
-            end
+            first = true
+        end
+        
+        uhash = "#{uuid}/#{hash}"
+        
+        cmd  = []
+        cmd << "tar -czf #{curr}.tar.gz #{curr}/"
+        cmd << "mv #{curr}.tar.gz #{repo}/"
+        %x[#{cmd.join(";")}]
+        
+        FileUtils.mkdir_p("#{repo}/#{hash}")
+        
+        c = YAML.load(File.open("#{here}/.dwrm/config.yml", "r").read)
+        list = Hash[c[:list].sort]
+        File.open(config, "w") do |f|
+            c[:list][Time.now.to_i] = hash
+            f.write(YAML.dump c)
+        end
+        
+        one = "#{repo}/#{curr}.tar.gz"
+        two = "#{repo}/last.tar.gz"
+        
+        diff  = []
+        diff << "cd #{root}"
+        diff << "diff --text #{one} #{two} > data/#{uhash}/patch.dpf"
+        diff << "rm #{two}"
+        diff << "mv #{one} #{two}"
+        diff << "cp #{two} #{repo}/first.tar.gz" if first
+        %x[#{diff.join(";")}]
+        
+        unless first
+            last  = []
+            last << "cd #{repo}/#{list[list.keys[-1]]}"
+            last << "echo '#{hash}' > next"
+            last << "cd #{repo}/#{hash}"
+            last << "echo '#{list[list.keys[-1]]}' > prev"
+            %x[#{last.join(";")}]
+        else
+            prev  = []
+            prev << "cd #{repo}/#{hash}"
+            prev << "echo 'first' > prev"
+            %x[#{prev.join(";")}]
         end
     end
+end
+
+def dwrm_pop here
+    curr = here.split("/")[-1]
+    root = File.expand_path(File.dirname(__FILE__))
+    
+    return unless directory_exists? ["#{root}/data","#{here}/.dwrm"]
+    config = "#{here}/.dwrm/config.yml"
+    conf = nil
+    conf = File.open(config, "r").read if File.file?(config)
+    return if conf.nil?
+    conf = YAML.load(conf)
+    uuid = conf[:uuid]
+    list = Hash[conf[:list].sort]
+    repo = "#{root}/data/#{uuid}"
+    last = list[list.keys[-1]]
+    past = list[list.keys[-2]]
+    
+    cmd  = []
+    cmd << "cd .."
+    cmd << "tar -czf #{curr}.tar.gz #{curr}/"
+    cmd << "rm -rf #{curr}/"
+    cmd << "patch #{curr}.tar.gz #{repo}/#{last}/patch.dpf"
+    cmd << "tar -xzf #{curr}.tar.gz"
+    cmd << "mv #{curr}.tar.gz #{repo}/last.tar.gz"
+    cmd << "rm #{curr}.tar.gz*"
+    cmd << "rm -rf #{repo}/#{last}"
+    cmd << "rm #{repo}/#{past}/next" unless past.nil?
+    %x[#{cmd.join(";")}]
+    
+    list.delete(list.keys[-1])
+    conf[:list] = list
+    File.open(config, "w"){|f| f.write(YAML.dump conf)}
 end
 
 def regex_cmd word
@@ -237,8 +269,17 @@ def parse_args
             else 
                 puts "DataWorm has already been initialized."
             end
+        when "list"
+            config = "#{here}/.dwrm/config.yml"
+            if File.file? config
+                conf = YAML.load File.open(config, "r").read
+                list = Hash[conf[:list].sort]
+                list.values.map{|hash| puts hash}
+            end
         when "push"
             dwrm_push(here)
+        when "pop"
+            dwrm_pop(here)
         end
         
         no_care = ["help","list", "init"]
@@ -260,6 +301,6 @@ end
 
 parse_args unless ARGV[0].nil?
 
-puts "\n+------------------+\n\n" 
+# puts "\n+------------------+\n\n" 
 
 # FileUtils.rm_rf ".dwrm"
