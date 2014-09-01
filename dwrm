@@ -15,6 +15,10 @@ Purpose:   A shell utility for a private version control system
 require "fileutils"
 require "yaml"
 require "digest"
+require "io/console"
+
+# To deal with ^C
+trap("SIGINT") { puts; exit }
 
 # here = File.expand_path(File.dirname(__FILE__))
 
@@ -71,17 +75,27 @@ possible backups.
 
 == Usage:
 
-    dwrm [commands] [hash] [flags] [tag]
+    dwrm [commands] [flags] [tag | hash]
 
 
 == Commands
 
 help    :: Print out the documenation you are reading now
 init    :: Intialize the .dwrm directory and its configurations
+config  :: Modify your repository's configuration file (also runs `init`)
 list    :: List all versions in order of occurrence 
 push    :: Push a version to your repository
 pop     :: Pop a version from your repository
+
+== Flags
+
+Options:
+    [-s]
+    [--ssh]
+    
+ssh     :: Tell DataWorm to look for your SSH server to store versions
 EOF
+
 # revert  :: {hash} -> Takes a version hash as a parameter
 #             Revert back to version {hash} from the repository
 # undo    :: {num} -> Takes a number as a parameter; Defaults to 1
@@ -89,18 +103,19 @@ EOF
 # redo    :: Pushes back any versions removed by pop, revert, or undo
 # remove  :: Safely remove your project from DataWorm
 # restore :: Recreate your project to DataWorm if it was removed
-# recover :: Rollback entire repository back to last version if corrupted    
+# recover :: Rollback entire repository back to last version if corrupted
 # 
 # 
 # == Flags
 # 
 # Options:
-#     [-bBeos]
-#     [--backup, no-backup, encrypt, offline, ssh]
+#     [-bBehos]
+#     [--backup, no-backup, encrypt, hash, offline, ssh]
 # 
 # backup    :: Call backup when disabled in config
 # no-backup :: Negate the effect of default backups
 # encrypt   :: Enables encryption on all data for the current project
+# hash      :: Allows a specific hash value to be passed to a command
 # offline   :: If using SSH, helps improve speed by skipping online check
 # ssh       :: Tell DataWorm to look for your SSH server to store versions
 # 
@@ -118,13 +133,12 @@ def directory_exists? dests
     return exists
 end
 
-def set_configs dir
+def set_configs dir, param
 # Push configuration files to .dwrm
-    
-    
+
     config = "#{dir}/config.yml"
-    File.open config, File::CREAT unless File.file? config
-    File.open(config, "w") do |f|
+    
+    unless File.file? config
         conf = {}
         conf[:uuid] = 1.upto(8).map{rand(16).to_s(16)}.join("")
         conf[:root] = File.expand_path(File.dirname(__FILE__))
@@ -132,10 +146,34 @@ def set_configs dir
         conf[:here] = dir
         conf[:list] = {} # {time: hash}
         conf[:hist] = "" # last command
+        conf[:ssh?] = false # use ssh?
         # conf[:time] = Time.now.to_i
-        f.write(YAML.dump conf)
+        
+        File.open config, File::CREAT unless File.file? config
+        File.open(config, "w"){|f| f.write(YAML.dump conf)}
+    else    
+        conf  = {}
+        confs = YAML.load File.read(config)
+        confs.each do |y|
+            c = y.to_a
+            conf[c[0]] = c[1]
+        end
+        params.map do |param|
+            n = param.to_a
+            k = param[0].split(/[- ,;'".!?]/).join("_").to_sym
+            v = param[1]
+            conf[k] = v
+        end
+        puts conf
+        # File.open(config, "a") do |f|
+        #     f.write(YAML.dump conf)
+        # end
     end
-    puts File.open(config, "r").read()
+    # puts File.read(config)
+end
+
+def init_configs dir
+    set_configs dir, {}
 end
 
 def dwrm_push here
@@ -145,7 +183,7 @@ def dwrm_push here
         break unless directory_exists? ["#{root}/data","#{here}/.dwrm"]
         config = "#{here}/.dwrm/config.yml"
         conf = nil
-        conf = File.open(config, "r").read if File.file?(config)
+        conf = File.read(config) if File.file?(config)
         break if conf.nil?
         uuid = YAML.load(conf)[:uuid]
         
@@ -176,7 +214,7 @@ def dwrm_push here
         
         FileUtils.mkdir_p("#{repo}/#{hash}")
         
-        c = YAML.load(File.open("#{here}/.dwrm/config.yml", "r").read)
+        c = YAML.load(File.read("#{here}/.dwrm/config.yml"))
         list = Hash[c[:list].sort]
         File.open(config, "w") do |f|
             c[:list][Time.now.to_i] = hash
@@ -217,7 +255,7 @@ def dwrm_pop here
     return unless directory_exists? ["#{root}/data","#{here}/.dwrm"]
     config = "#{here}/.dwrm/config.yml"
     conf = nil
-    conf = File.open(config, "r").read if File.file?(config)
+    conf = File.read(config) if File.file?(config)
     return if conf.nil?
     conf = YAML.load(conf)
     uuid = conf[:uuid]
@@ -243,9 +281,37 @@ def dwrm_pop here
     File.open(config, "w"){|f| f.write(YAML.dump conf)}
 end
 
+def dwrm_ssh here, host, user, pass
+    curr = here.split("/")[-1]
+    root = File.expand_path(File.dirname(__FILE__))
+    
+    return unless directory_exists? ["#{root}/data","#{here}/.dwrm"]
+    config = "#{here}/.dwrm/config.yml"
+    conf = nil
+    conf = File.read(config) if File.file?(config)
+    return if conf.nil?
+    conf = YAML.load(conf)
+    
+    ssh? = conf[:ssh?]
+    
+    cred = {}
+    cred[:host] = host
+    cred[:user] = user
+    cred[:pass] = pass
+    
+    conf[:ssh?] = true
+    conf[:cred] = cred
+    
+    File.open(config, "w"){|f| f.write(YAML.dump conf)}
+    
+    if conf[:ssh?] != ssh? # Do stuff
+end
+
 def regex_cmd word
 # Command regex generator
-
+    
+    # regex => -r or --regex or regex
+    # ^-?([a-zA-Z]|-?[a-zA-Z]{2,})$
     return /^(-#{word[0]}$|(--#{word[0]}|#{word[0]})#{word[1..-1]}$)/
 end
 
@@ -256,23 +322,47 @@ def parse_args
     here = ENV["PWD"].sub("~", ENV["HOME"])
     
     # Only alpha commands may pass
-    if /^(-[a-zA-Z]$|(--[a-zA-Z]|[a-zA-Z])[a-zA-Z]+?$)/ =~ ARGV[0]
+    if /^-?([a-zA-Z]|-?[a-zA-Z]{2,})$/ =~ ARGV[0]
         case ARGV[0]
         when "help" then help_docs()
         when "init"
             dir = "#{here}/.dwrm"
             unless directory_exists? [dir]
                 FileUtils.mkdir_p(dir)
-                set_configs(dir)
+                init_configs(dir)
                 
                 puts "Initialized empty DataWorm repository in #{dir}"
             else 
-                puts "DataWorm has already been initialized."
+                puts "DataWorm has aly been initialized."
+            end
+        when "config"
+            dir = "#{here}/.dwrm"
+            unless directory_exists? [dir]
+                FileUtils.mkdir_p(dir)
+                set_configs(dir)
+                
+                puts "Initialized empty DataWorm repository in #{dir}"
+            end
+            
+            # Flags
+            if /^-?([a-zA-Z]|-?[a-zA-Z]{2,})$/ =~ ARGV[1]
+                case ARGV[1]
+                when regex_cmd("ssh")
+                    print "host: "
+                    host = $stdin.gets.chomp
+                    print "user: "
+                    user = $stdin.gets.chomp
+                    print "pass: "
+                    pass = $stdin.noecho(&:gets).chomp # Hide input
+                    puts
+                    
+                    dwrm_ssh(here, host, user, pass)
+                end
             end
         when "list"
             config = "#{here}/.dwrm/config.yml"
             if File.file? config
-                conf = YAML.load File.open(config, "r").read
+                conf = YAML.load File.open(config, "r").
                 list = Hash[conf[:list].sort]
                 list.values.map{|hash| puts hash}
             end
@@ -280,19 +370,33 @@ def parse_args
             dwrm_push(here)
         when "pop"
             dwrm_pop(here)
+        else
+            puts "Invalud command"
         end
         
-        no_care = ["help","list", "init"]
-        if File.file?("#{here}/.dwrm/config.yml") and !no_care.include? ARGV[0]
-            conf = File.open("#{here}/.dwrm/config.yml", "r").read
-            conf = YAML.load(conf)
-            conf[:hist] = ARGV[0]
-            File.open("#{here}/.dwrm/config.yml", "w") do |f|
-                f.write(YAML.dump conf)
+        cmds = [ 
+            "help" ,
+            "init" , 
+            "list" , 
+            "push" , 
+            "pop"
+        ]
+        if File.file?("#{here}/.dwrm/config.yml") and cmds.include? ARGV[0]
+            no_care = ["help","list", "init"]
+            unless no_care.include? ARGV[0]
+                p 0
+                conf = File.read("#{here}/.dwrm/config.yml")
+                conf = YAML.load(conf)
+                conf[:hist] = ARGV[0]
+                File.open("#{here}/.dwrm/config.yml", "w") do |f|
+                    f.write(YAML.dump conf)
+                end
             end
         end
     end
 end
+
+p ARGV
 
 data = File.expand_path(File.dirname(__FILE__) + "/data")
 unless directory_exists? [data]
