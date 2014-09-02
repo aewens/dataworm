@@ -16,6 +16,8 @@ require "fileutils"
 require "yaml"
 require "digest"
 require "io/console"
+require "net/ssh"
+require "net/scp"
 
 # To deal with ^C
 trap("SIGINT") { puts; exit }
@@ -292,7 +294,7 @@ def dwrm_ssh here, host, user, pass
     return if conf.nil?
     conf = YAML.load(conf)
     
-    ssh? = conf[:ssh?]
+    ssh = conf[:ssh?]
     
     cred = {}
     cred[:host] = host
@@ -304,7 +306,31 @@ def dwrm_ssh here, host, user, pass
     
     File.open(config, "w"){|f| f.write(YAML.dump conf)}
     
-    if conf[:ssh?] != ssh? # Do stuff
+    if conf[:ssh?] != ssh
+        Net::SSH.start(host, user, :password => pass) do |ssh|
+            # Make a place for Dataworm's data
+            ssh.exec!("mkdir -p ~/.dwrm")
+            
+            # Move Dataworm's data
+            ssh.scp.upload!("#{root}/data", 
+                "/home/#{user}/.dwrm/data", 
+                :recursive => true)
+        end
+    end
+end
+
+def dwrm_ssh_mode here
+    curr = here.split("/")[-1]
+    root = File.expand_path(File.dirname(__FILE__))
+    
+    return unless directory_exists? ["#{root}/data","#{here}/.dwrm"]
+    config = "#{here}/.dwrm/config.yml"
+    conf = nil
+    conf = File.read(config) if File.file?(config)
+    return if conf.nil?
+    conf = YAML.load(conf)
+    
+    # This place will be really dangerous. Do not do this unless SSH is setup!
 end
 
 def regex_cmd word
@@ -348,15 +374,25 @@ def parse_args
             if /^-?([a-zA-Z]|-?[a-zA-Z]{2,})$/ =~ ARGV[1]
                 case ARGV[1]
                 when regex_cmd("ssh")
-                    print "host: "
-                    host = $stdin.gets.chomp
-                    print "user: "
-                    user = $stdin.gets.chomp
-                    print "pass: "
-                    pass = $stdin.noecho(&:gets).chomp # Hide input
-                    puts
-                    
-                    dwrm_ssh(here, host, user, pass)
+                    if /^-?([a-zA-Z]|-?[a-zA-Z]{2,})$/ =~ ARGV[2]
+                        case ARGV[2]
+                        when regex_cmd("remove")
+                            print "Are you sure? "
+                            answer = $stdin.gets.chomp
+                            regex  = /(^[yY][eEsS]{2}?$)/i
+                            dwrm_ssh_mode(here) if answer =~ regex
+                        end
+                    else                        
+                        print "host: "
+                        host = $stdin.gets.chomp
+                        print "user: "
+                        user = $stdin.gets.chomp
+                        print "pass: "
+                        pass = $stdin.noecho(&:gets).chomp # Hide input
+                        puts
+                        
+                        dwrm_ssh(here, host, user, pass)
+                    end
                 end
             end
         when "list"
