@@ -3,13 +3,23 @@
 =begin
     
 File:      dwrm
-Version:   0.1.0
+Version:   0.1.1
 Author:    Austin Ewens
 Created:   07-17-2014
 Copyright: 2014, Austin Ewens
 Purpose:   A shell utility for a private version control system
     
 =end
+
+################################################################
+#                                                              #
+# I'd like to use this space here to apologize for the lack of #
+# decent documentation. If you are reading this and want me to #
+# add more documenation than what is here, just hit my up.     #
+#                                                              #
+# -Austin Ewens                                                #
+#                                                              #
+################################################################
 
 # $:.unshift(File.expand_path(File.dirname(__FILE__) + "/lib"))
 require "fileutils"
@@ -284,7 +294,6 @@ def dwrm_pop here
 end
 
 def dwrm_ssh here, host, user, pass
-    curr = here.split("/")[-1]
     root = File.expand_path(File.dirname(__FILE__))
     
     return unless directory_exists? ["#{root}/data","#{here}/.dwrm"]
@@ -320,7 +329,6 @@ def dwrm_ssh here, host, user, pass
 end
 
 def dwrm_ssh_mode here
-    curr = here.split("/")[-1]
     root = File.expand_path(File.dirname(__FILE__))
     
     return unless directory_exists? ["#{root}/data","#{here}/.dwrm"]
@@ -330,7 +338,8 @@ def dwrm_ssh_mode here
     return if conf.nil?
     conf = YAML.load(conf)
     
-    # This place will be really dangerous. Do not do this unless SSH is setup!
+    # Warning: below here is very dangerous. Use this feature at your own risk!
+    
 end
 
 def regex_cmd word
@@ -379,7 +388,7 @@ def parse_args
                         when regex_cmd("remove")
                             print "Are you sure? "
                             answer = $stdin.gets.chomp
-                            regex  = /(^[yY][eEsS]{2}?$)/i
+                            regex  = /^$|(^[yY][eEsS]{2}?$)/i
                             dwrm_ssh_mode(here) if answer =~ regex
                         end
                     else                        
