@@ -17,7 +17,7 @@ Purpose:   A shell utility for a private version control system
 # decent documentation. If you are reading this and want me to #
 # add more documenation than what is here, just hit my up.     #
 #                                                              #
-# -Austin Ewens                                                #
+# - aewens                                                     #
 #                                                              #
 ################################################################
 
@@ -192,70 +192,142 @@ def dwrm_push here
     curr = here.split("/")[-1]
     root = File.expand_path(File.dirname(__FILE__))
     Dir.chdir ".." do
-        break unless directory_exists? ["#{root}/data","#{here}/.dwrm"]
+        break unless directory_exists? ["#{here}/.dwrm"]
         config = "#{here}/.dwrm/config.yml"
         conf = nil
         conf = File.read(config) if File.file?(config)
         break if conf.nil?
-        uuid = YAML.load(conf)[:uuid]
+        conf = YAML.load(conf)
+        uuid = conf[:uuid]
+        prev = "-"
+        
+        unless conf[:ssh?]
+            break unless directory_exists? "#{root}/data"
+        end
         
         hash  = Digest::MD5.hexdigest("#{Time.now.to_i}")
         first = false
         repo  = "#{root}/data/#{uuid}"
-        unless directory_exists? [repo]
-            FileUtils.mkdir_p(repo)
+        
+        if conf[:ssh?]
+            host = conf[:cred][:host]
+            user = conf[:cred][:user]
+            pass = conf[:cred][:pass]
+            repo = "/home/#{user}/.dwrm/data/#{uuid}"
             
-            # Create a pseudo last.tar.gz
+            c = YAML.load(File.read("#{here}/.dwrm/config.yml"))
+            list = Hash[c[:list].sort]
+            File.open(config, "w") do |f|
+                c[:list][Time.now.to_i] = hash
+                c[:last] = list[list.keys[-1]]
+                f.write(YAML.dump c)
+            end
+            
+            Net::SSH.start(host, user, :password => pass) do |ssh|
+                _exists = "[ -e ~/bash.sh ] && echo \"true\" || echo \"false\""
+                exists  = ssh.exec! _exists
+                if exists == "false"
+                    cmd  = []
+                    cmd << "mkdir -p #{repo}"
+                    cmd << "cd #{repo}/"
+                    cmd << "mkdir last"
+                    cmd << "touch last/#{hash}"
+                    cmd << "tar -czf last.tar.gz last/"
+                    cmd << "rm -rf last/"
+                    ssh.exec! "#{cmd.join(";")}"
+                    
+                    first = true
+                end
+                
+                uhash = "#{uuid}/#{hash}"
+                
+                cmd  = []
+                cmd << "tar -czf #{curr}.tar.gz #{curr}/"
+                cmd << "mv #{curr}.tar.gz #{repo}/"
+                cmd << "mkdir -p #{repo}/#{hash}"
+                ssh.exec! "#{cmd.join(";")}"
+                
+                one = "#{repo}/#{curr}.tar.gz"
+                two = "#{repo}/last.tar.gz"
+                
+                diff  = []
+                diff << "cd #{root}"
+                diff << "diff --text #{one} #{two} > data/#{uhash}/patch.dpf"
+                diff << "rm #{two}"
+                diff << "mv #{one} #{two}"
+                diff << "cp #{two} #{repo}/first.tar.gz" if first
+                ssh.exec! "#{diff.join(";")}"
+                
+                unless first
+                    last  = []
+                    last << "cd #{repo}/#{list[list.keys[-1]]}"
+                    last << "echo '#{hash}' > next"
+                    last << "cd #{repo}/#{hash}"
+                    last << "echo '#{list[list.keys[-1]]}' > prev"
+                    ssh.exec! "#{last.join(";")}"
+                else
+                    prev  = []
+                    prev << "cd #{repo}/#{hash}"
+                    prev << "echo 'first' > prev"
+                    ssh.exec! "#{prev.join(";")}"
+                end
+            end
+        else
+            unless directory_exists? [repo]
+                FileUtils.mkdir_p(repo)
+                
+                # Create a pseudo last.tar.gz
+                cmd  = []
+                cmd << "cd #{repo}/"
+                cmd << "mkdir last"
+                cmd << "touch last/#{hash}"
+                cmd << "tar -czf last.tar.gz last/"
+                cmd << "rm -rf last/"
+                %x[#{cmd.join(";")}]
+                
+                first = true
+            end
+            
+            uhash = "#{uuid}/#{hash}"
+            
             cmd  = []
-            cmd << "cd #{repo}/"
-            cmd << "mkdir last"
-            cmd << "touch last/#{hash}"
-            cmd << "tar -czf last.tar.gz last/"
-            cmd << "rm -rf last/"
+            cmd << "tar -czf #{curr}.tar.gz #{curr}/"
+            cmd << "mv #{curr}.tar.gz #{repo}/"
             %x[#{cmd.join(";")}]
             
-            first = true
-        end
-        
-        uhash = "#{uuid}/#{hash}"
-        
-        cmd  = []
-        cmd << "tar -czf #{curr}.tar.gz #{curr}/"
-        cmd << "mv #{curr}.tar.gz #{repo}/"
-        %x[#{cmd.join(";")}]
-        
-        FileUtils.mkdir_p("#{repo}/#{hash}")
-        
-        c = YAML.load(File.read("#{here}/.dwrm/config.yml"))
-        list = Hash[c[:list].sort]
-        File.open(config, "w") do |f|
-            c[:list][Time.now.to_i] = hash
-            f.write(YAML.dump c)
-        end
-        
-        one = "#{repo}/#{curr}.tar.gz"
-        two = "#{repo}/last.tar.gz"
-        
-        diff  = []
-        diff << "cd #{root}"
-        diff << "diff --text #{one} #{two} > data/#{uhash}/patch.dpf"
-        diff << "rm #{two}"
-        diff << "mv #{one} #{two}"
-        diff << "cp #{two} #{repo}/first.tar.gz" if first
-        %x[#{diff.join(";")}]
-        
-        unless first
-            last  = []
-            last << "cd #{repo}/#{list[list.keys[-1]]}"
-            last << "echo '#{hash}' > next"
-            last << "cd #{repo}/#{hash}"
-            last << "echo '#{list[list.keys[-1]]}' > prev"
-            %x[#{last.join(";")}]
-        else
-            prev  = []
-            prev << "cd #{repo}/#{hash}"
-            prev << "echo 'first' > prev"
-            %x[#{prev.join(";")}]
+            FileUtils.mkdir_p("#{repo}/#{hash}")
+            
+            c = YAML.load(File.read("#{here}/.dwrm/config.yml"))
+            list = Hash[c[:list].sort]
+            File.open(config, "w") do |f|
+                c[:list][Time.now.to_i] = hash
+                f.write(YAML.dump c)
+            end
+            
+            one = "#{repo}/#{curr}.tar.gz"
+            two = "#{repo}/last.tar.gz"
+            
+            diff  = []
+            diff << "cd #{root}"
+            diff << "diff --text #{one} #{two} > data/#{uhash}/patch.dpf"
+            diff << "rm #{two}"
+            diff << "mv #{one} #{two}"
+            diff << "cp #{two} #{repo}/first.tar.gz" if first
+            %x[#{diff.join(";")}]
+            
+            unless first
+                last  = []
+                last << "cd #{repo}/#{list[list.keys[-1]]}"
+                last << "echo '#{hash}' > next"
+                last << "cd #{repo}/#{hash}"
+                last << "echo '#{list[list.keys[-1]]}' > prev"
+                %x[#{last.join(";")}]
+            else
+                prev  = []
+                prev << "cd #{repo}/#{hash}"
+                prev << "echo 'first' > prev"
+                %x[#{prev.join(";")}]
+            end
         end
     end
 end
@@ -339,7 +411,7 @@ def dwrm_ssh_mode here
     conf = YAML.load(conf)
     
     # Warning: below here is very dangerous. Use this feature at your own risk!
-    
+    FileUtils.rm_rf("#{root}/data") if conf[:ssh?]
 end
 
 def regex_cmd word
@@ -388,10 +460,10 @@ def parse_args
                         when regex_cmd("remove")
                             print "Are you sure? "
                             answer = $stdin.gets.chomp
-                            regex  = /^$|(^[yY][eEsS]{2}?$)/i
+                            regex  = /(^[yY][eEsS]{2}?$)/i #^$|
                             dwrm_ssh_mode(here) if answer =~ regex
                         end
-                    else                        
+                    else
                         print "host: "
                         host = $stdin.gets.chomp
                         print "user: "
@@ -429,7 +501,6 @@ def parse_args
         if File.file?("#{here}/.dwrm/config.yml") and cmds.include? ARGV[0]
             no_care = ["help","list", "init"]
             unless no_care.include? ARGV[0]
-                p 0
                 conf = File.read("#{here}/.dwrm/config.yml")
                 conf = YAML.load(conf)
                 conf[:hist] = ARGV[0]
@@ -441,11 +512,25 @@ def parse_args
     end
 end
 
-p ARGV
-
+# No data directory? We might need to do something about that
 data = File.expand_path(File.dirname(__FILE__) + "/data")
 unless directory_exists? [data]
-    FileUtils.mkdir_p(data)
+    root = File.expand_path(File.dirname(__FILE__))
+    here = ENV["PWD"].sub("~", ENV["HOME"])
+    
+    if directory_exists? ["#{here}/.dwrm"]
+        config = "#{here}/.dwrm/config.yml"
+        conf = nil
+        conf = File.read(config) if File.file?(config)
+        unless conf.nil?
+            conf = YAML.load(conf)
+            FileUtils.mkdir_p(data) unless conf[:ssh?]
+        else
+            FileUtils.mkdir_p(data)
+        end
+    else
+        FileUtils.mkdir_p(data)
+    end
 end
 
 parse_args unless ARGV[0].nil?
