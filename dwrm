@@ -3,7 +3,7 @@
 =begin
     
 File:      dwrm
-Version:   0.1.2
+Version:   0.2.0
 Author:    Austin Ewens
 Created:   07-17-2014
 Copyright: 2014, Austin Ewens
@@ -145,6 +145,10 @@ def directory_exists? dests
     return exists
 end
 
+def run cmds
+    %x[#{cmds.join(";")}]
+end
+
 def set_configs dir, param
 # Push configuration files to .dwrm
 
@@ -207,7 +211,6 @@ def dwrm_push here
         
         hash  = Digest::MD5.hexdigest("#{Time.now.to_i}")
         first = false
-        repo  = "#{root}/data/#{uuid}"
         
         if conf[:ssh?]
             host = conf[:cred][:host]
@@ -223,17 +226,19 @@ def dwrm_push here
                 f.write(YAML.dump c)
             end
             
+            %x[tar -cvzf #{curr}.tar.gz #{curr}/]
+            
             Net::SSH.start(host, user, :password => pass) do |ssh|
-                _exists = "[ -e ~/bash.sh ] && echo \"true\" || echo \"false\""
-                exists  = ssh.exec! _exists
+                _exists = "[ -e #{repo} ] && echo \"true\" || echo \"false\""
+                exists  = (ssh.exec! _exists).chomp
+                
                 if exists == "false"
                     cmd  = []
                     cmd << "mkdir -p #{repo}"
-                    cmd << "cd #{repo}/"
-                    cmd << "mkdir last"
-                    cmd << "touch last/#{hash}"
-                    cmd << "tar -czf last.tar.gz last/"
-                    cmd << "rm -rf last/"
+                    cmd << "mkdir -p #{repo}/last"
+                    cmd << "touch #{repo}/last/#{hash}"
+                    cmd << "tar -czf #{repo}/last.tar.gz #{repo}/last/"
+                    cmd << "rm -rf #{repo}/last/"
                     ssh.exec! "#{cmd.join(";")}"
                     
                     first = true
@@ -241,22 +246,20 @@ def dwrm_push here
                 
                 uhash = "#{uuid}/#{hash}"
                 
-                cmd  = []
-                cmd << "tar -czf #{curr}.tar.gz #{curr}/"
-                cmd << "mv #{curr}.tar.gz #{repo}/"
-                cmd << "mkdir -p #{repo}/#{hash}"
-                ssh.exec! "#{cmd.join(";")}"
+                ssh.scp.upload!("#{curr}.tar.gz", "#{repo}/")
+                
+                ssh.exec! "mkdir -p #{repo}/#{hash}"
                 
                 one = "#{repo}/#{curr}.tar.gz"
                 two = "#{repo}/last.tar.gz"
                 
-                diff  = []
-                diff << "cd #{root}"
-                diff << "diff --text #{one} #{two} > data/#{uhash}/patch.dpf"
-                diff << "rm #{two}"
-                diff << "mv #{one} #{two}"
-                diff << "cp #{two} #{repo}/first.tar.gz" if first
-                ssh.exec! "#{diff.join(";")}"
+                move  = []
+                # diff << "diff --text #{one} #{two} > #{repo}/#{hash}/patch.dpf"
+                move << "rm #{two}"
+                move << "cp #{one} #{two}"
+                move << "mv #{one} #{repo}/#{hash}/"
+                move << "cp #{two} #{repo}/first.tar.gz" if first
+                ssh.exec! move.join(";")
                 
                 unless first
                     last  = []
@@ -272,7 +275,10 @@ def dwrm_push here
                     ssh.exec! "#{prev.join(";")}"
                 end
             end
+            
+            %x[rm #{curr}.tar.gz]
         else
+            repo = "#{root}/data/#{uuid}"
             unless directory_exists? [repo]
                 FileUtils.mkdir_p(repo)
                 
@@ -283,17 +289,15 @@ def dwrm_push here
                 cmd << "touch last/#{hash}"
                 cmd << "tar -czf last.tar.gz last/"
                 cmd << "rm -rf last/"
-                %x[#{cmd.join(";")}]
+                run(cmd)
                 
                 first = true
             end
             
-            uhash = "#{uuid}/#{hash}"
-            
             cmd  = []
-            cmd << "tar -czf #{curr}.tar.gz #{curr}/"
+            cmd << "tar -cvzf #{curr}.tar.gz #{curr}/"
             cmd << "mv #{curr}.tar.gz #{repo}/"
-            %x[#{cmd.join(";")}]
+            run(cmd)
             
             FileUtils.mkdir_p("#{repo}/#{hash}")
             
@@ -307,13 +311,13 @@ def dwrm_push here
             one = "#{repo}/#{curr}.tar.gz"
             two = "#{repo}/last.tar.gz"
             
-            diff  = []
-            diff << "cd #{root}"
-            diff << "diff --text #{one} #{two} > data/#{uhash}/patch.dpf"
-            diff << "rm #{two}"
-            diff << "mv #{one} #{two}"
-            diff << "cp #{two} #{repo}/first.tar.gz" if first
-            %x[#{diff.join(";")}]
+            move  = []
+            # move << "diff --text #{one} #{two} > #{repo}/#{hash}/patch.dpf"
+            move << "rm #{two}"
+            move << "cp #{one} #{two}"
+            move << "mv #{one} #{repo}/#{hash}/"
+            move << "cp #{two} #{repo}/first.tar.gz" if first
+            run(move)
             
             unless first
                 last  = []
@@ -321,12 +325,12 @@ def dwrm_push here
                 last << "echo '#{hash}' > next"
                 last << "cd #{repo}/#{hash}"
                 last << "echo '#{list[list.keys[-1]]}' > prev"
-                %x[#{last.join(";")}]
+                run(last)
             else
                 prev  = []
                 prev << "cd #{repo}/#{hash}"
                 prev << "echo 'first' > prev"
-                %x[#{prev.join(";")}]
+                run(prev)
             end
         end
     end
@@ -336,33 +340,81 @@ def dwrm_pop here
     curr = here.split("/")[-1]
     root = File.expand_path(File.dirname(__FILE__))
     
-    return unless directory_exists? ["#{root}/data","#{here}/.dwrm"]
+    return unless directory_exists? ["#{here}/.dwrm"]
     config = "#{here}/.dwrm/config.yml"
     conf = nil
     conf = File.read(config) if File.file?(config)
     return if conf.nil?
     conf = YAML.load(conf)
-    uuid = conf[:uuid]
-    list = Hash[conf[:list].sort]
-    repo = "#{root}/data/#{uuid}"
-    last = list[list.keys[-1]]
-    past = list[list.keys[-2]]
+    pwd  = %x[cd ..; pwd].chomp!
     
-    cmd  = []
-    cmd << "cd .."
-    cmd << "tar -czf #{curr}.tar.gz #{curr}/"
-    cmd << "rm -rf #{curr}/"
-    cmd << "patch #{curr}.tar.gz #{repo}/#{last}/patch.dpf"
-    cmd << "tar -xzf #{curr}.tar.gz"
-    cmd << "mv #{curr}.tar.gz #{repo}/last.tar.gz"
-    cmd << "rm #{curr}.tar.gz*"
-    cmd << "rm -rf #{repo}/#{last}"
-    cmd << "rm #{repo}/#{past}/next" unless past.nil?
-    %x[#{cmd.join(";")}]
-    
-    list.delete(list.keys[-1])
-    conf[:list] = list
-    File.open(config, "w"){|f| f.write(YAML.dump conf)}
+    Dir.chdir("..") do
+        uuid = conf[:uuid]
+        list = Hash[conf[:list].sort]
+        last = list[list.keys[-1]]
+        past = list[list.keys[-2]]
+        
+        if conf[:ssh?]
+            host = conf[:cred][:host]
+            user = conf[:cred][:user]
+            pass = conf[:cred][:pass]
+            repo = "/home/#{user}/.dwrm/data/#{uuid}"
+            
+            cmd0  = []
+            cmd0 << "tar -czf #{curr}.tar.gz #{curr}/"
+            run(cmd0)
+            
+            Net::SSH.start(host, user, :password => pass) do |ssh|
+                ssh.scp.upload!("#{curr}.tar.gz", "#{repo}/")
+                
+                cmd1  = []
+                cmd1 << "cd #{repo}"
+                cmd1 << "diff --text #{curr}.tar.gz last.tar.gz > .patch"
+                cmd1 << "patch #{curr}.tar.gz < .patch"
+                cmd1 << "rm .patch"
+                ssh.exec! cmd1.join(";")
+                
+                ssh.scp.download!("#{repo}/#{curr}.tar.gz", "#{pwd}/")
+                
+                # cmd2 << "mv #{repo}/#{curr}.tar.gz #{repo}/last.tar.gz"
+                cmd2  = []
+                cmd2 << "cd #{repo}"
+                cmd2 << "rm last.tar.gz"
+                cmd2 << "rm #{curr}.tar.gz"
+                cmd2 << "cp #{past}/*.tar.gz last.tar.gz"
+                cmd2 << "rm -rf #{last}"
+                cmd2 << "rm #{past}/next" unless past.nil? or past.empty?
+                ssh.exec! cmd2.join(";")
+            end
+            
+            cmd3  = []
+            cmd3 << "tar -xvzf #{curr}.tar.gz"
+            cmd3 << "rm #{curr}.tar.gz"
+            run(cmd3)
+            
+            list.delete(list.keys[-1])
+            conf[:list] = list
+            File.open(config, "w"){|f| f.write(YAML.dump conf)}
+        else
+            repo = "#{root}/data/#{uuid}"
+            
+            cmd  = []
+            cmd << "cd .."
+            cmd << "tar -czf #{curr}.tar.gz #{curr}/"
+            cmd << "rm -rf #{curr}/"
+            cmd << "patch #{curr}.tar.gz #{repo}/#{last}/patch.dpf"
+            cmd << "tar -xzf #{curr}.tar.gz"
+            cmd << "mv #{curr}.tar.gz #{repo}/last.tar.gz"
+            cmd << "rm #{curr}.tar.gz*"
+            cmd << "rm -rf #{repo}/#{last}"
+            cmd << "rm #{repo}/#{past}/next" unless past.nil?
+            %x[#{cmd.join(";")}]
+            
+            list.delete(list.keys[-1])
+            conf[:list] = list
+            File.open(config, "w"){|f| f.write(YAML.dump conf)}
+        end
+    end
 end
 
 def dwrm_ssh here, host, user, pass
@@ -479,7 +531,7 @@ def parse_args
         when "list"
             config = "#{here}/.dwrm/config.yml"
             if File.file? config
-                conf = YAML.load File.open(config, "r").
+                conf = YAML.load File.open(config, "r")
                 list = Hash[conf[:list].sort]
                 list.values.map{|hash| puts hash}
             end
