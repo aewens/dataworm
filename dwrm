@@ -3,7 +3,7 @@
 =begin
     
 File:      dwrm
-Version:   0.2.0
+Version:   0.2.1
 Author:    Austin Ewens
 Created:   07-17-2014
 Copyright: 2014, Austin Ewens
@@ -239,7 +239,7 @@ def dwrm_push here
                     cmd << "touch #{repo}/last/#{hash}"
                     cmd << "tar -czf #{repo}/last.tar.gz #{repo}/last/"
                     cmd << "rm -rf #{repo}/last/"
-                    ssh.exec! "#{cmd.join(";")}"
+                    ssh.exec! cmd.join(";")
                     
                     first = true
                 end
@@ -254,7 +254,6 @@ def dwrm_push here
                 two = "#{repo}/last.tar.gz"
                 
                 move  = []
-                # diff << "diff --text #{one} #{two} > #{repo}/#{hash}/patch.dpf"
                 move << "rm #{two}"
                 move << "cp #{one} #{two}"
                 move << "mv #{one} #{repo}/#{hash}/"
@@ -267,12 +266,12 @@ def dwrm_push here
                     last << "echo '#{hash}' > next"
                     last << "cd #{repo}/#{hash}"
                     last << "echo '#{list[list.keys[-1]]}' > prev"
-                    ssh.exec! "#{last.join(";")}"
+                    ssh.exec! last.join(";")
                 else
                     prev  = []
                     prev << "cd #{repo}/#{hash}"
                     prev << "echo 'first' > prev"
-                    ssh.exec! "#{prev.join(";")}"
+                    ssh.exec! prev.join(";")
                 end
             end
             
@@ -312,7 +311,6 @@ def dwrm_push here
             two = "#{repo}/last.tar.gz"
             
             move  = []
-            # move << "diff --text #{one} #{two} > #{repo}/#{hash}/patch.dpf"
             move << "rm #{two}"
             move << "cp #{one} #{two}"
             move << "mv #{one} #{repo}/#{hash}/"
@@ -360,9 +358,7 @@ def dwrm_pop here
             pass = conf[:cred][:pass]
             repo = "/home/#{user}/.dwrm/data/#{uuid}"
             
-            cmd0  = []
-            cmd0 << "tar -czf #{curr}.tar.gz #{curr}/"
-            run(cmd0)
+            %x[tar -czf #{curr}.tar.gz #{curr}/]
             
             Net::SSH.start(host, user, :password => pass) do |ssh|
                 ssh.scp.upload!("#{curr}.tar.gz", "#{repo}/")
@@ -376,14 +372,21 @@ def dwrm_pop here
                 
                 ssh.scp.download!("#{repo}/#{curr}.tar.gz", "#{pwd}/")
                 
-                # cmd2 << "mv #{repo}/#{curr}.tar.gz #{repo}/last.tar.gz"
                 cmd2  = []
                 cmd2 << "cd #{repo}"
                 cmd2 << "rm last.tar.gz"
                 cmd2 << "rm #{curr}.tar.gz"
-                cmd2 << "cp #{past}/*.tar.gz last.tar.gz"
                 cmd2 << "rm -rf #{last}"
-                cmd2 << "rm #{past}/next" unless past.nil? or past.empty?
+                unless past.nil? or past.empty?
+                    cmd2 << "cp #{past}/*.tar.gz last.tar.gz" 
+                    cmd2 << "rm #{past}/next"
+                else
+                    hash  = Digest::MD5.hexdigest("#{Time.now.to_i}")
+                    cmd2 << "mkdir last"
+                    cmd2 << "touch last/#{hash}"
+                    cmd2 << "tar -czf last.tar.gz last/"
+                    cmd2 << "rm -rf last/"
+                end
                 ssh.exec! cmd2.join(";")
             end
             
@@ -399,16 +402,29 @@ def dwrm_pop here
             repo = "#{root}/data/#{uuid}"
             
             cmd  = []
-            cmd << "cd .."
             cmd << "tar -czf #{curr}.tar.gz #{curr}/"
-            cmd << "rm -rf #{curr}/"
-            cmd << "patch #{curr}.tar.gz #{repo}/#{last}/patch.dpf"
+            cmd << "mv #{curr}.tar.gz #{repo}/"
+            cmd << "cd #{repo}"
+            cmd << "diff --text #{curr}.tar.gz last.tar.gz > .patch"
+            cmd << "patch #{curr}.tar.gz < .patch"
+            cmd << "rm .patch"
+            cmd << "mv #{curr}.tar.gz #{pwd}/"
+            cmd << "rm last.tar.gz"
+            cmd << "rm -rf #{last}"
+            unless past.nil? or past.empty?
+                cmd << "cp #{past}/*.tar.gz last.tar.gz"
+                cmd << "rm #{past}/next"
+            else
+                hash = Digest::MD5.hexdigest("#{Time.now.to_i}")
+                cmd << "mkdir last"
+                cmd << "touch last/#{hash}"
+                cmd << "tar -czf last.tar.gz last/"
+                cmd << "rm -rf last/"
+            end
+            cmd << "cd #{pwd}/"
             cmd << "tar -xzf #{curr}.tar.gz"
-            cmd << "mv #{curr}.tar.gz #{repo}/last.tar.gz"
-            cmd << "rm #{curr}.tar.gz*"
-            cmd << "rm -rf #{repo}/#{last}"
-            cmd << "rm #{repo}/#{past}/next" unless past.nil?
-            %x[#{cmd.join(";")}]
+            cmd << "rm #{curr}.tar.gz"
+            run(cmd)
             
             list.delete(list.keys[-1])
             conf[:list] = list
